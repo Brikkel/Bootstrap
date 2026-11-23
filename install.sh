@@ -3,12 +3,14 @@
 #   curl -fsSL https://raw.githubusercontent.com/Brikkel/Bootstrap/main/install.sh | sh
 #
 # 1. installs git + chezmoi (Homebrew on macOS, pacman on Arch, apt on Debian/Raspberry Pi OS)
-# 2. asks the machine name and whether it's a work machine
+# 2. asks whether it's a work machine and its short name
 # 3. creates this machine's SSH key (~/.ssh/<machine>) and waits until you've added it:
 #      personal: to your GitLab account, dotfiles come from gitlab.brikkel.com (home network / WireGuard)
 #      work:     as deploy keys only (GitHub mirror read-only, work-notes with write access)
 # 4. runs chezmoi init --apply, which asks the remaining questions
 #
+# Safe to run again (after Ctrl-C or a wrong answer): the key and ssh config are kept, and it offers to
+# answer chezmoi's questions again.
 # Source of truth: install.sh in the dotfiles repo; the public Brikkel/Bootstrap repo holds a copy.
 # Testing: BOOTSTRAP_NONINTERACTIVE=1 MACHINE=x WORK=false DOTFILES_REPO=<path or url> sh install.sh
 set -eu
@@ -59,10 +61,18 @@ esac
 # --- 2. questions --------------------------------------------------------------------------------
 say "About this machine"
 default_machine="$(uname -n | cut -d. -f1 | tr 'A-Z' 'a-z')" # `hostname` isn't on a minimal Arch
-ask "Machine name (short, e.g. elitebook, mbp-work):" "${MACHINE:-$default_machine}"
-machine="$REPLY"
-ask "Work machine? (true/false)" "${WORK:-false}"
+note "Type the answer and press Enter; Enter alone takes the default in [brackets]."
+case "${WORK:-false}" in true) default_work=y ;; *) default_work=n ;; esac
+ask "Work machine? (y/n)" "$default_work"
 case "$REPLY" in y*|Y*|true) work=true ;; *) work=false ;; esac
+if [ "$work" = true ]; then
+  note "Short name for the dotfiles (WireGuard peer, host lists), e.g. mbp-work."
+  note "Not the SUE computer name: chezmoi asks the SUE item id later and sets that name itself."
+else
+  note "Short name for the dotfiles (WireGuard peer, host lists); Finding Nemo names, e.g. squirt."
+fi
+ask "Machine name:" "${MACHINE:-$default_machine}"
+machine="$REPLY"
 
 # --- 3. SSH key ---------------------------------------------------------------------------------
 key="$HOME/.ssh/$machine"
@@ -117,10 +127,17 @@ done
 
 # --- 4. chezmoi -----------------------------------------------------------------------------------
 say "Applying the dotfiles (chezmoi asks the remaining questions)"
+reprompt=""
+if [ -f "$HOME/.config/chezmoi/chezmoi.toml" ]; then
+  ask "chezmoi already has answers from an earlier run. Answer its questions again? (y/n)" n
+  case "$REPLY" in y*|Y*) reprompt=--prompt ;; esac
+fi
+note "chezmoi's questions take ONE key, without Enter: y / n, or the first letter of a choice."
+note "Enter alone takes the default. Don't type whole words: the extra letters answer the next questions."
 # These prompt texts must match .chezmoi.toml.tmpl exactly.
-set -- --apply \
+set -- --apply $reprompt \
   --promptString "machine name (short: wireguard peer + host lists)=$machine" \
-  --promptBool "work (work machine: AWS + terraform)=$work"
+  --promptBool "work machine? (y/n)=$work"
 if [ -n "$NONINTERACTIVE" ]; then
   chezmoi init "$@" --promptDefaults "$repo" </dev/null
 else
